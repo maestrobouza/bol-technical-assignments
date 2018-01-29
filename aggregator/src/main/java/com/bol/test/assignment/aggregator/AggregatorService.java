@@ -1,5 +1,13 @@
 package com.bol.test.assignment.aggregator;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
 import com.bol.test.assignment.offer.Offer;
 import com.bol.test.assignment.offer.OfferCondition;
 import com.bol.test.assignment.offer.OfferService;
@@ -8,25 +16,127 @@ import com.bol.test.assignment.order.OrderService;
 import com.bol.test.assignment.product.Product;
 import com.bol.test.assignment.product.ProductService;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-
 public class AggregatorService {
-    private OrderService orderService;
-    private OfferService offerService;
-    private ProductService productService;
+	private OrderService orderService;
+	private OfferService offerService;
+	private ProductService productService;
 
-    public AggregatorService(OrderService orderService, OfferService offerService, ProductService productService) {
-        this.orderService = orderService;
-        this.offerService = offerService;
-        this.productService = productService;
-    }
+	public AggregatorService(OrderService orderService, OfferService offerService, ProductService productService) {
+		this.orderService = orderService;
+		this.offerService = offerService;
+		this.productService = productService;
+	}
 
-    public EnrichedOrder enrich(int sellerId) throws ExecutionException, InterruptedException {
-       return null;
-    }
+	/**
+	 * Enrich.
+	 *
+	 * @param sellerId the seller id
+	 * @return the enriched order
+	 * @throws ExecutionException the execution exception
+	 * @throws InterruptedException the interrupted exception
+	 */
+	public EnrichedOrder enrich(int sellerId) throws ExecutionException, InterruptedException {
+		Order order = getOrderWithSellerId(sellerId);
+		Offer offer = null;
+		Product product = null;
+		/* In order to ensure a high performance, we need to execute the offer and product services in parallel*/
+		/* create a task for offer service */
+		Callable<Object> offerStatement = new Callable<Object>() {
+			public Object call() throws Exception {
+				return getOfferByOfferId(order);
+			}
+		};
+		/* create a task for product service */
+		Callable<Object> productStatement = new Callable<Object>() {
+			public Object call() throws Exception {
+				return getProductByProductId(order);
+			}
+		};
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		List<Future<Object>> futuresList = executor.invokeAll(Arrays.asList(offerStatement, productStatement));
+		/* retrieve results */
+		for(Future<Object> future : futuresList) {
+			if (future.get() instanceof Offer){
+				offer = (Offer)future.get();
+			}else if (future.get() instanceof Product){
+				product = (Product)future.get();
+			}
+		}
+		/* we need to shut down the executor */
+		executor.shutdown();
 
-    private EnrichedOrder combine(Order order, Offer offer, Product product) {
-        return new EnrichedOrder(order.getId(), offer.getId(), offer.getCondition(), product.getId(), product.getTitle());
-    }
+		return combine(order, offer, product) ;
+	}
+
+	/**
+	 * Combine.
+	 *
+	 * @param order the order
+	 * @param offer the offer
+	 * @param product the product
+	 * @return the enriched order
+	 */
+	private EnrichedOrder combine(Order order, Offer offer, Product product) {
+		if (offer == null && product == null){
+			return new EnrichedOrder(order.getId(), -1, OfferCondition.UNKNOWN, -1, null);
+		}
+		else if (offer == null){
+			return new EnrichedOrder(order.getId(), -1, OfferCondition.UNKNOWN, product.getId(), product.getTitle());
+		}
+		else if (product == null){
+			return new EnrichedOrder(order.getId(), offer.getId(), offer.getCondition(), -1, null);
+		}
+		return new EnrichedOrder(order.getId(), offer.getId(), offer.getCondition(), product.getId(), product.getTitle());
+	}
+
+	/**
+	 * Gets the order with seller id.
+	 *
+	 * @param sellerId the seller id
+	 * @return the order with seller id
+	 * @throws RuntimeException the runtime exception
+	 */
+	private Order getOrderWithSellerId(int sellerId) throws RuntimeException {
+		try {
+			return orderService.getOrder(sellerId);
+		} catch (Exception e) {
+			// log the exception instead of printing the stack trace
+			e.printStackTrace();
+			throw new RuntimeException("Order service failed", e);
+		}
+	}
+
+	/**
+	 * Gets the offer by offer id.
+	 *
+	 * @param order the order
+	 * @return the offer by offer id
+	 */
+	private Offer getOfferByOfferId(Order order) {
+		Offer offer = null;
+		try {
+			offer = offerService.getOffer(order.getOfferId());
+		} catch (Exception e) {
+			// log the exception instead of printing the stack trace
+			e.printStackTrace();
+		}
+		return offer;
+	}
+
+	/**
+	 * Gets the product by product id.
+	 *
+	 * @param order the order
+	 * @return the product by product id
+	 */
+	private Product getProductByProductId(Order order) {
+		Product product = null;
+		try {
+			product = productService.getProduct(order.getProductId());
+		} catch (Exception e) {
+			// log the exception instead of printing the stack trace
+			e.printStackTrace();
+		}
+		return product;
+	}
 }
