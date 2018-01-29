@@ -8,6 +8,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.bol.test.assignment.offer.Offer;
 import com.bol.test.assignment.offer.OfferCondition;
 import com.bol.test.assignment.offer.OfferService;
@@ -17,9 +20,12 @@ import com.bol.test.assignment.product.Product;
 import com.bol.test.assignment.product.ProductService;
 
 public class AggregatorService {
-	private OrderService orderService;
-	private OfferService offerService;
-	private ProductService productService;
+
+	private final Logger LOGGER = LoggerFactory.getLogger(this.getClass());
+
+	private final OrderService orderService;
+	private final OfferService offerService;
+	private final ProductService productService;
 
 	public AggregatorService(OrderService orderService, OfferService offerService, ProductService productService) {
 		this.orderService = orderService;
@@ -41,19 +47,21 @@ public class AggregatorService {
 		Product product = null;
 		/* In order to ensure a high performance, we need to execute the offer and product services in parallel*/
 		/* create a task for offer service */
-		Callable<Object> offerStatement = new Callable<Object>() {
+		Callable<Object> offerTask = new Callable<Object>() {
 			public Object call() throws Exception {
+				LOGGER.debug("get offer by offer id task started");
 				return getOfferByOfferId(order);
 			}
 		};
 		/* create a task for product service */
-		Callable<Object> productStatement = new Callable<Object>() {
+		Callable<Object> productTask = new Callable<Object>() {
 			public Object call() throws Exception {
+				LOGGER.debug("get product by product id task started");
 				return getProductByProductId(order);
 			}
 		};
 		ExecutorService executor = Executors.newFixedThreadPool(2);
-		List<Future<Object>> futuresList = executor.invokeAll(Arrays.asList(offerStatement, productStatement));
+		List<Future<Object>> futuresList = executor.invokeAll(Arrays.asList(offerTask, productTask));
 		/* retrieve results */
 		for(Future<Object> future : futuresList) {
 			if (future.get() instanceof Offer){
@@ -64,6 +72,7 @@ public class AggregatorService {
 		}
 		/* we need to shut down the executor */
 		executor.shutdown();
+		LOGGER.debug("executor shut down");
 
 		return combine(order, offer, product) ;
 	}
@@ -98,10 +107,11 @@ public class AggregatorService {
 	 */
 	private Order getOrderWithSellerId(int sellerId) throws RuntimeException {
 		try {
-			return orderService.getOrder(sellerId);
+			Order order = orderService.getOrder(sellerId);
+			LOGGER.debug("order with seller id " + sellerId + " retrieved successfully");
+			return order;
 		} catch (Exception e) {
-			// log the exception instead of printing the stack trace
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 			throw new RuntimeException("Order service failed", e);
 		}
 	}
@@ -116,9 +126,9 @@ public class AggregatorService {
 		Offer offer = null;
 		try {
 			offer = offerService.getOffer(order.getOfferId());
+			LOGGER.debug("Offer with id " + order.getOfferId() + " retrieved successfully");
 		} catch (Exception e) {
-			// log the exception instead of printing the stack trace
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return offer;
 	}
@@ -133,9 +143,9 @@ public class AggregatorService {
 		Product product = null;
 		try {
 			product = productService.getProduct(order.getProductId());
+			LOGGER.debug("Product with id " + order.getProductId() + " retrieved successfully");
 		} catch (Exception e) {
-			// log the exception instead of printing the stack trace
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return product;
 	}
